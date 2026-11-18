@@ -331,6 +331,90 @@ acpi_get_xsdt(phys_addr_t rsdp_phys, int* acpi_xsdt_n)
 }
 
 /*
+ * acpi_map_hpet: map the HPET MMIO block when DESCR_HEADER is the
+ * HPET table.  Shared by the MADT walks below and by
+ * acpi_hpet_discover.
+ */
+static void
+acpi_map_hpet(struct acpi_dhdr *descr_header)
+{
+    uint64_t map_addr;
+
+    if (acpi_check_signature(descr_header->signature, ACPI_HPET_SIG,
+                             4*sizeof(uint8_t)) != ACPI_SUCCESS)
+        return;
+
+    map_addr = ((struct acpi_hpet *)descr_header)->address.addr64;
+    assert (map_addr != 0);
+    hpet_addr = (uint32_t *)kmem_map_aligned_table(map_addr, 1024,
+                                                   VM_PROT_READ | VM_PROT_WRITE);
+    printf("HPET at physical address 0x%llx\n", map_addr);
+}
+
+/*
+ * acpi_map_hpet_entry: map one RSDT/XSDT entry header and look for
+ * the HPET table in it.
+ */
+static void
+acpi_map_hpet_entry(phys_addr_t table_addr)
+{
+    struct acpi_dhdr *descr_header;
+
+    descr_header = (struct acpi_dhdr*) kmem_map_aligned_table(table_addr,
+                    sizeof(struct acpi_dhdr), VM_PROT_READ);
+    if (descr_header == NULL)
+        return;
+
+    acpi_map_hpet(descr_header);
+}
+
+/*
+ * acpi_hpet_discover: find and map the HPET block without the APIC
+ * bring-up.  This is the HPET half of acpi_apic_init, so builds that
+ * run the PIC, which is what the Linux device glue forces, can still
+ * use the high precision counter.  acpi_initialise() must have run,
+ * and the walk stops early when acpi_apic_init already mapped the
+ * block.  hpet_init reports on serial whether a block was found.
+ */
+void
+acpi_hpet_discover(void)
+{
+    struct acpi_rsdt *rsdt;
+    struct acpi_xsdt *xsdt;
+    phys_addr_t sdt_base;
+    int entries, i, is_64bit = 0;
+    uint8_t checksum;
+
+    if (hpet_addr != NULL)
+        return;
+
+    sdt_base = acpi_get_sdt_base(&is_64bit);
+    if (sdt_base == 0)
+        return;
+
+    if (!is_64bit) {
+        rsdt = acpi_get_rsdt(sdt_base, &entries);
+        if (rsdt == NULL)
+            return;
+        checksum = acpi_checksum((void *)rsdt, rsdt->header.length);
+        if (checksum != 0)
+            return;
+        for (i = 0; i < entries && hpet_addr == NULL; i++)
+            acpi_map_hpet_entry(rsdt->entry[i]);
+    }
+    else {
+        xsdt = acpi_get_xsdt(sdt_base, &entries);
+        if (xsdt == NULL)
+            return;
+        checksum = acpi_checksum((void *)xsdt, xsdt->header.length);
+        if (checksum != 0)
+            return;
+        for (i = 0; i < entries && hpet_addr == NULL; i++)
+            acpi_map_hpet_entry(xsdt->entry[i]);
+    }
+}
+
+/*
  * acpi_get_apic: get MADT/APIC table from RSDT entries.
  *
  * Receives as input the RSDT initial address,
@@ -345,7 +429,6 @@ acpi_get_apic(struct acpi_rsdt *rsdt, int acpi_rsdt_n)
     struct acpi_dhdr *descr_header;
     struct acpi_apic *madt = NULL;
     int check_signature;
-    uint64_t map_addr;
 
     /* Search APIC entries in rsdt table. */
     for (int i = 0; i < acpi_rsdt_n; i++) {
@@ -358,13 +441,7 @@ acpi_get_apic(struct acpi_rsdt *rsdt, int acpi_rsdt_n)
             madt = (struct acpi_apic*) descr_header;
 
         /* Check if the entry is a HPET */
-        check_signature = acpi_check_signature(descr_header->signature, ACPI_HPET_SIG, 4*sizeof(uint8_t));
-        if (check_signature == ACPI_SUCCESS) {
-            map_addr = ((struct acpi_hpet *)descr_header)->address.addr64;
-            assert (map_addr != 0);
-            hpet_addr = (uint32_t *)kmem_map_aligned_table(map_addr, 1024, VM_PROT_READ | VM_PROT_WRITE);
-            printf("HPET at physical address 0x%llx\n", map_addr);
-        }
+        acpi_map_hpet(descr_header);
     }
 
     return madt;
@@ -385,7 +462,6 @@ acpi_get_apic2(struct acpi_xsdt *xsdt, int acpi_xsdt_n)
     struct acpi_dhdr *descr_header;
     struct acpi_apic *madt = NULL;
     int check_signature;
-    uint64_t map_addr;
 
     /* Search APIC entries in rsdt table. */
     for (int i = 0; i < acpi_xsdt_n; i++) {
@@ -398,13 +474,7 @@ acpi_get_apic2(struct acpi_xsdt *xsdt, int acpi_xsdt_n)
             madt = (struct acpi_apic *)descr_header;
 
         /* Check if the entry is a HPET. */
-        check_signature = acpi_check_signature(descr_header->signature, ACPI_HPET_SIG, 4*sizeof(uint8_t));
-        if (check_signature == ACPI_SUCCESS) {
-            map_addr = ((struct acpi_hpet *)descr_header)->address.addr64;
-            assert (map_addr != 0);
-            hpet_addr = (uint32_t *)kmem_map_aligned_table(map_addr, 1024, VM_PROT_READ | VM_PROT_WRITE);
-            printf("HPET at physical address 0x%llx\n", map_addr);
-        }
+        acpi_map_hpet(descr_header);
     }
 
     return madt;

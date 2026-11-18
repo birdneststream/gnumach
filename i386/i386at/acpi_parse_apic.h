@@ -204,4 +204,11 @@ extern unsigned lapic_addr;
 struct multiboot2_raw_info;
 void acpi_initialise (const struct multiboot2_raw_info *bi);
 
+/* Map the HPET block without the APIC bring-up, for PIC builds.
+   Programs the counter once it is mapped, see i386/i386/apic.c,
+   declared here because model_dep.c calls it without the LAPIC
+   header.  */
+void acpi_hpet_discover (void);
+void hpet_init (void);
+
 #endif /* __ACPI_H__ */

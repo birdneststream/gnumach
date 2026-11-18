@@ -108,6 +108,17 @@ AC_ARG_ENABLE([kernsample],
   AC_DEFINE([MACH_KERNSAMPLE], [0], [MACH_KERNSAMPLE])
 [fi]
 
+# Tickless idle, stopping the periodic timer interrupt while the
+# CPU is idle and arming a one-shot at the earliest timeout deadline
+# instead, single CPU x86 only.
+AC_ARG_ENABLE([tickless],
+  AS_HELP_STRING([--enable-tickless], [enable tickless idle]))
+[if [ x"$enable_tickless" = xyes ]; then]
+  AC_DEFINE([TICKLESS], [1], [TICKLESS])
+[else]
+  AC_DEFINE([TICKLESS], [0], [TICKLESS])
+[fi]
+
 # VM debugging calls.
 AC_DEFINE([MACH_VM_DEBUG], [1], [MACH_VM_DEBUG])
 

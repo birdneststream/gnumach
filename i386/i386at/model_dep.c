@@ -239,21 +239,37 @@ void machine_init(void)
 #endif
 #endif
 
-#ifdef APIC
+#if defined(APIC)
 	/*
-	 * Initialize the HPET
+	 * Initialize the HPET.  The MADT walk in acpi_apic_init
+	 * already mapped the block.
 	 */
+	hpet_init();
+#elif (defined(AT386) || defined(ATX86_64)) && !defined(MACH_HYP)
+	/*
+	 * Without the APIC nothing mapped the HPET yet.  Only a free
+	 * running counter is programmed, no interrupt and no APIC, so
+	 * bring it up on PIC builds too and keep the high precision
+	 * clock readable.
+	 */
+	acpi_hpet_discover();
 	hpet_init();
 #endif
 }
 
 /* Conserve power on processor CPU.  */
+#include <i386/tickless.h>
+
 void machine_idle (int cpu)
 {
 #ifdef	MACH_HYP
   hyp_idle();
 #else	/* MACH_HYP */
   assert (cpu == cpu_number ());
+#if	MACH_TICKLESS
+  if (tickless_machine_idle ())
+    return;
+#endif
   asm volatile ("hlt" : : : "memory");
 #endif	/* MACH_HYP */
 }

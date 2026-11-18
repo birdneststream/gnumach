@@ -1632,6 +1632,11 @@ int	no_dispatch_count = 0;
  *	to execute.
  */
 
+#if	MACH_TICKLESS
+/* From i386/i386/tickless.c.  */
+extern void	tickless_exit(void);
+#endif
+
 static void __attribute__((noreturn)) idle_thread_continue(void)
 {
 	processor_t myprocessor;
@@ -1685,6 +1690,15 @@ static void __attribute__((noreturn)) idle_thread_continue(void)
 			machine_idle(mycpu);
 #endif /* POWER_SAVE */
 		}
+
+#if	MACH_TICKLESS
+		/*
+		 * Something is runnable.  Charge the idle gap and put
+		 * the periodic tick back before the dispatcher runs, a
+		 * no-op unless the tick was stopped.
+		 */
+		tickless_exit();
+#endif
 
 #ifdef	MARK_CPU_ACTIVE
 		MARK_CPU_ACTIVE(mycpu);

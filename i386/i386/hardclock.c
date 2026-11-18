@@ -53,6 +53,24 @@ hardclock(int iunit, /* 'unit' number */
           struct i386_interrupt_state *regs /* saved registers */
           )
 {
+#if	MACH_TICKLESS
+	if (tickless_active) {
+	    /*
+	     * IRQ0 with the tick stopped is the idle one-shot, not
+	     * the periodic tick.  Charge the measured gap through
+	     * clock_catchup instead of the per-tick path, which
+	     * would add a fixed tick and refresh last_hpc_read so
+	     * the gap is lost.  The idle loop re-arms the one-shot
+	     * or exits to a runnable thread on wake.
+	     */
+	    clock_catchup();
+#ifdef LINUX_DEV
+	    linux_timer_intr();
+#endif /* LINUX_DEV */
+	    return;
+	}
+#endif
+
 	if (ret_addr == return_to_iret)
 	    /*
 	     * Interrupt from user mode or from thread stack.

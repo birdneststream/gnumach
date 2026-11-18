@@ -75,6 +75,9 @@ WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 #define PIT_SQUAREMODE	0x06		/* square-wave mode */
 #define PIT_RATEMODE	0x04		/* rate generator mode */
 #define PIT_ONESHOTMODE	0x02		/* one-shot mode */
+#define PIT_TERMMODE	0x00		/* mode 0, interrupt on terminal count.
+					   Counts from the divisor load, no gate edge
+					   needed, so it works on channel 0 */
 
 /* Used for Timer 2. */
 #define PIT_C2		0x80            /* select counter 2 */
@@ -98,5 +101,7 @@ extern void pit_prepare_sleep(int hz);
 extern void pit_sleep(void);
 extern void pit_udelay(int usec);
 extern void pit_mdelay(int msec);
+extern unsigned int pit_oneshot_arm(unsigned int usec);
+extern void pit_periodic_restart(void);
 
 #endif /* _I386_PIT_H_ */

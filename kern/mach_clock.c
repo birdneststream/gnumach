@@ -120,6 +120,18 @@ timeout_data_t	timeout_timers[NTIMERS] = {0};
 uint32_t	last_hpc_read = 0;
 
 /*
+ * Tickless idle bookkeeping.  tickless_active is raised while the
+ * periodic tick is stopped, which relaxes the one tick clamp in
+ * time_value64_add_hpc so reads can see the full gap that
+ * clock_catchup charges when the tick restarts.  catchup_ns keeps
+ * the sub tick remainder of the last catch up so no drift
+ * accumulates across gaps.  Both are only touched on the master
+ * CPU.
+ */
+int		tickless_active = 0;
+static uint64_t	catchup_ns = 0;
+
+/*
  *	This update protocol, with a check value, allows
  *		do {
  *			secs = mtime->seconds;
@@ -427,6 +439,49 @@ void softclock(void)
 }
 
 /*
+ *	Find the nearest armed timeout visible in the wheel, mirroring
+ *	softclock's traversal: spokes are scanned for ticks
+ *	softticks+1 through softticks+TIMEOUT_WHEEL_SIZE, and an entry
+ *	counts only when its t_time matches the tick of its spoke, so an
+ *	entry parked beyond the horizon in a colliding spoke is not
+ *	mistaken for near.  Runs under twheel_lock.
+ *
+ *	The return value counts ticks the way set_timeout's interval
+ *	does: 0 means a deadline on the very next tick, N means N ticks
+ *	later than that.  There is a real deadline within the horizon
+ *	when the return is 0 or more.  -1 means no deadline is visible
+ *	within the horizon, which is deliberately not 0 so the two
+ *	cases cannot be confused.
+ */
+int timeout_next_tick(void)
+{
+	queue_head_t	*spoke;
+	timeout_t	t;
+	unsigned long	curticks;
+	int		offset;
+	spl_t		s;
+
+	s = simple_lock_irq(&twheel_lock);
+	for (offset = 1; offset <= TIMEOUT_WHEEL_SIZE; offset++) {
+		curticks = softticks + offset;
+		spoke = TIMEOUT_WHEEL_QUEUE(curticks);
+		t = (timeout_t)queue_next(spoke);
+		/* Iterate over all elements within spoke checking that we
+		 * did not wrap back to a spoke */
+		while (! ((t >= (timeout_t)&timeoutwheel[0])
+		       && (t < (timeout_t)&timeoutwheel[TIMEOUT_WHEEL_SIZE])) ) {
+			if (t->t_time == curticks) {
+				simple_unlock_irq(s, &twheel_lock);
+				return offset - 1;
+			}
+			t = (timeout_t)queue_next(&t->chain);
+		}
+	}
+	simple_unlock_irq(s, &twheel_lock);
+	return -1;
+}
+
+/*
  *	Set timeout.
  *
  *	Parameters:
@@ -530,13 +585,107 @@ time_value64_add_hpc(time_value64_t *value, uint32_t last_hpc)
 	/* Time since last clock interrupt in nanosecond.  */
 	int64_t ns = (now - last_hpc) * hpclock_get_counter_period_nsec();
 
-	/* Limit the value of ns under the period of a clock interrupt.  */
-	if (ns >= tick * 1000)
+	/* Limit the value of ns under the period of a clock interrupt,
+	   unless the tick is stopped and clock_catchup owns the gap.  */
+	if (!tickless_active && ns >= tick * 1000)
 	    /* Let ns stuck at the end of the clock interrupt period when
 	       something bad happens.  */
 	    ns = (tick * 1000) - 1;
 
 	time_value64_add_nanos(value, ns);
+}
+
+/*
+ *	Advance time, uptime and the timeout wheel across a measured
+ *	counter gap, normally an idle period with the tick stopped.
+ *	Reads the high precision counter, charges the full delta since
+ *	last_hpc_read to wall time and uptime, advances elapsed_ticks by
+ *	the whole ticks in the delta while keeping the remainder in
+ *	catchup_ns so no drift accumulates, drains the wheel through
+ *	softclock and refreshes last_hpc_read.  Valid on the master CPU
+ *	only, and a no-op when there is no high precision clock.
+ */
+void clock_catchup(void)
+{
+	uint32_t	now, period;
+	uint64_t	ns, ns_per_tick;
+	unsigned long	add_ticks;
+	spl_t		s, s1;
+
+	if (cpu_number() != master_cpu)
+		return;
+
+	now = hpclock_read_counter();
+	period = hpclock_get_counter_period_nsec();
+	if (now == 0 || period == 0)
+		/* No high precision counter, nothing to measure.  */
+		return;
+
+	s = splhigh();	/* keep the clock interrupt out */
+
+	ns = (uint64_t)(now - last_hpc_read) * period;
+
+	/* A gap past one second carries whole seconds.  The add
+	 * nanos macro normalises a single step only, so charging a
+	 * multi second gap in one call would trip its assert and
+	 * drop the machine into the debugger.  A lost one shot
+	 * while halted measures exactly such a gap once any other
+	 * interrupt wakes the CPU.  */
+	{
+		uint64_t	carry_ns = ns % TIME_NANOS_MAX;
+
+		time.seconds += ns / TIME_NANOS_MAX;
+		uptime.seconds += ns / TIME_NANOS_MAX;
+		time_value64_add_nanos(&time, carry_ns);
+		time_value64_add_nanos(&uptime, carry_ns);
+	}
+	update_mapped_time(&time);
+	update_mapped_uptime(&uptime);
+
+	ns_per_tick = (uint64_t)tick * 1000;
+	add_ticks = ns / ns_per_tick;
+	catchup_ns += ns % ns_per_tick;
+	if (catchup_ns >= ns_per_tick) {
+		add_ticks++;
+		catchup_ns -= ns_per_tick;
+	}
+
+	s1 = simple_lock_irq(&twheel_lock);
+	elapsed_ticks += add_ticks;
+	simple_unlock_irq(s1, &twheel_lock);
+
+
+	{
+	    int		my_cpu = cpu_number();
+
+	    /*
+	     * Charge the gap to the idle bucket the way the per
+	     * tick path would have, in whole ticks.  Under
+	     * statistical timing bump the idle thread once by the
+	     * full gap in microseconds, so the thread time sums
+	     * stay truthful across the stop.  Synthetic catch
+	     * ups, the TK2 self test, run with the CPU busy and
+	     * charge nothing.
+	     */
+	    if (cpu_idle(my_cpu)) {
+		machine_slot[my_cpu].cpu_ticks[CPU_STATE_IDLE] += add_ticks;
+#if	STAT_TIME
+		{
+		    thread_t	thread = current_thread();
+
+		    if (thread)
+			timer_bump(&thread->system_timer, ns / 1000);
+		}
+#endif	/* STAT_TIME */
+	    }
+	}
+
+	(void) splsoftclock();
+	softclock();		/* bounded by MAX_SOFTCLOCK_STEPS */
+
+	last_hpc_read = now;
+
+	splx(s);
 }
 
 

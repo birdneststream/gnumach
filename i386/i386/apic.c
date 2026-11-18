@@ -504,10 +504,8 @@ hpet_mdelay(uint32_t ms)
 uint32_t
 hpclock_read_counter(void)
 {
-#ifdef APIC
     if (hpet_addr)
         return HPET32(HPET_COUNTER);
-#endif
     return 0;
 }
 

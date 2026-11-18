@@ -76,8 +76,13 @@ pit_prepare_sleep(int usec)
     val &= ~PITAUX_OUT2;
     val |= PITAUX_GATE2;
     outb (PITAUX_PORT, val);
-    outb (PITCTL_PORT, PIT_C2 | PIT_LOADMODE | PIT_ONESHOTMODE);
+    /* Mode 0 starts counting on the divisor load.  Mode 1 would
+     * need a gate edge, and the port 0x61 gate writes freeze
+     * channel 0 counting on the KVM PIT model.  */
+    outb (PITCTL_PORT, PIT_C2 | PIT_LOADMODE | PIT_TERMMODE);
     val = (uint64_t)CLKNUM * usec / 1000000;
+    if (val == 0)
+        val = 1;
     lsb = val & 0xff;
     msb = val >> 8;
     outb (PITCTR2_PORT, lsb);
@@ -88,15 +93,6 @@ pit_prepare_sleep(int usec)
 void
 pit_sleep(void)
 {
-    uint8_t val;
-
-    /* Start counting down */
-    val = inb(PITAUX_PORT);
-    val &= ~PITAUX_GATE2;
-    outb (PITAUX_PORT, val); /* Gate low */
-    val |= PITAUX_GATE2;
-    outb (PITAUX_PORT, val); /* Gate high */
-
     /* Wait until counter reaches zero */
     while ((inb(PITAUX_PORT) & PITAUX_VAL) == 0);
 }
@@ -119,12 +115,53 @@ pit_mdelay(int msec)
     pit_udelay(1000 * msec);
 }
 
-void
-clkstart(void)
+/*
+ * Arm PIT channel 0 in mode 0 to raise IRQ0 once after USEC
+ * microseconds.  Mode 0 starts counting as soon as the divisor is
+ * written, which is what channel 0 needs since its gate is hardwired
+ * high and mode 1 would never see a trigger edge.  The 16 bit
+ * counter caps a single shot at MAX_PIT_USEC, so USEC is clamped and
+ * the duration actually armed is returned for callers that chain
+ * longer waits.  Interrupts are disabled around the three outb
+ * writes so a clock interrupt cannot observe a half loaded counter.
+ */
+unsigned int
+pit_oneshot_arm(unsigned int usec)
 {
-	if (cpu_number() != 0)
-		/* Only one PIT initialization is needed */
-		return;
+	uint64_t	count;
+	unsigned char	byte;
+	unsigned long	s;
+
+	if (usec > MAX_PIT_USEC)
+		usec = MAX_PIT_USEC;
+
+	count = (uint64_t)CLKNUM * usec / 1000000;
+	if (count == 0)
+		count = 1;
+	if (count > 0xffff)
+		count = 0xffff;
+
+	s = sploff();
+
+	outb(pitctl_port, PIT_C0|PIT_LOADMODE|PIT_TERMMODE);
+	byte = count;
+	outb(pitctr0_port, byte);
+	byte = count >> 8;
+	outb(pitctr0_port, byte);
+
+	splon(s);
+
+	return count * 1000000 / CLKNUM;
+}
+
+/*
+ * Put channel 0 back into the square wave clkstart left it in, with
+ * the hz derived divisor.  Restores the periodic tick after a
+ * one-shot armed by pit_oneshot_arm.
+ */
+void
+pit_periodic_restart(void)
+{
 	unsigned char	byte;
 	unsigned long s;
 
@@ -141,4 +178,14 @@ clkstart(void)
 	byte = clknumb>>8;
 	outb(pitctr0_port, byte); 
 	splon(s);         /* restore interrupt state */
+}
+
+void
+clkstart(void)
+{
+	if (cpu_number() != 0)
+		/* Only one PIT initialization is needed */
+		return;
+
+	pit_periodic_restart();
 }

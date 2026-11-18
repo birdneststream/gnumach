@@ -110,7 +110,9 @@ libkernel_a_SOURCES += \
 	i386/i386/irq.h \
 	i386/i386/msr.h \
 	i386/i386/pit.c \
-	i386/i386/pit.h
+	i386/i386/pit.h \
+	i386/i386/tickless.c \
+	i386/i386/tickless.h
 
 if enable_apic
 libkernel_a_SOURCES += \

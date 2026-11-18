@@ -43,6 +43,24 @@ extern int		tick;		/* number of usec per tick */
 extern time_value64_t	time; 		/* wallclock time (unadjusted) */
 extern time_value64_t	uptime;		/* time since bootup */
 
+/* Nonzero while the periodic tick is stopped for tickless idle.
+   Relaxes the one tick clamp in the fast read path, see
+   clock_catchup.  */
+extern int		tickless_active;
+extern uint32_t		last_hpc_read;
+
+/* tk5d trace gates, see clock_catchup and i386/i386/tickless.c.  */
+
+/* Single CPU x86 with no hypervisor and a tickless build is where
+   tickless idle can engage.  One definition, used by kern and i386
+   callers alike.  The build option is --enable-tickless, which sets
+   the TICKLESS configure define.  */
+#if	TICKLESS && (defined(AT386) || defined(ATX86_64)) && (NCPUS == 1) && !defined(MACH_HYP)
+#define	MACH_TICKLESS	1
+#else
+#define	MACH_TICKLESS	0
+#endif
+
 typedef void timer_func_t(void *);
 
 /* Time-out element.  */
@@ -87,6 +105,15 @@ extern boolean_t reset_timeout(timeout_t t);
 	MACRO_END
 
 extern void init_timeout (void);
+
+/* Advance the clock and the timeout wheel across a measured
+   counter gap.  Master CPU only.  */
+extern void clock_catchup (void);
+
+/* Nearest armed timeout visible in the wheel, as a set_timeout
+   style interval offset, or -1 when none is visible within the
+   horizon.  */
+extern int timeout_next_tick (void);
 
 /*
  * Record a timestamp in STAMP.  Records values in the boot-time clock
