@@ -181,6 +181,15 @@ kvtophys(vm_offset_t addr)
 {
 	pt_entry_t *pte;
 
+#if	MACH_LARGEPAGE
+	/* A large page PDE maps its own chunk, pmap_pte would instead
+	   read ordinary memory at the chunk base as a page table.  */
+	pte = pmap_pde(kernel_pmap, addr);
+	if (pte != PT_ENTRY_NULL
+	    && (*pte & (INTEL_PTE_VALID | INTEL_PTE_PS))
+	       == (INTEL_PTE_VALID | INTEL_PTE_PS))
+		return pte_to_pa(*pte) | (addr & (pdenum2lin(1) - 1));
+#endif	/* MACH_LARGEPAGE */
 	if ((pte = pmap_pte(kernel_pmap, addr)) == PT_ENTRY_NULL)
 		return 0;
 	return pte_to_pa(*pte) | (addr & INTEL_OFFMASK);

@@ -475,7 +475,7 @@ pmap_ptp(const pmap_t pmap, vm_offset_t lin_addr)
 }
 #endif
 
-static inline pt_entry_t *
+pt_entry_t *
 pmap_pde(const pmap_t pmap, vm_offset_t addr)
 {
 	pt_entry_t *page_dir;
@@ -807,6 +807,10 @@ void pmap_bootstrap(void)
 	{
 		vm_offset_t va;
 		pt_entry_t global = CPU_HAS_FEATURE(CPU_FEATURE_PGE) ? INTEL_PTE_GLOBAL : 0;
+#if	MACH_LARGEPAGE
+		extern char etext[];
+		int large_pages = CPU_HAS_FEATURE(CPU_FEATURE_PSE);
+#endif	/* MACH_LARGEPAGE */
 
 		/*
 		 * Map virtual memory for all directly mappable physical memory, 1-1,
@@ -821,8 +825,35 @@ void pmap_bootstrap(void)
 		for (va = phystokv(0); va >= phystokv(0) && va < kernel_virtual_end; )
 		{
 			pt_entry_t *pde = kernel_page_dir + lin2pdenum_cont(kvtolin(va));
-			pt_entry_t *ptable = (pt_entry_t*)phystokv(pmap_grab_page());
+			pt_entry_t *ptable;
 			pt_entry_t *pte;
+
+#if	MACH_LARGEPAGE
+			/*
+			 * A chunk holding nothing but plain physical memory,
+			 * fully past the kernel image and fully inside the
+			 * direct map, can go in as one large page when the CPU
+			 * supports them.  That saves a page table per 4 MiB of
+			 * direct map and gives the direct map a far wider TLB
+			 * reach.  Chunks touching the kernel image keep page
+			 * tables, their text pages need read only mappings.
+			 * The bound is written as a subtraction so the last
+			 * chunk before the wrap around at 4 GiB can never pass
+			 * an overflowed addition.
+			 */
+			if (large_pages
+			    && va >= (vm_offset_t) etext
+			    && va <= phystokv(biosmem_directmap_end()) - pdenum2lin(1))
+			{
+				WRITE_PTE(pde, pa_to_pte((vm_offset_t) _kvtophys(va))
+					| INTEL_PTE_VALID | INTEL_PTE_WRITE
+					| INTEL_PTE_PS | global);
+				va += pdenum2lin(1);
+				continue;
+			}
+#endif	/* MACH_LARGEPAGE */
+
+			ptable = (pt_entry_t*)phystokv(pmap_grab_page());
 
 			/* Initialize the page directory entry.  */
 			WRITE_PTE(pde, pa_to_pte((vm_offset_t)_kvtophys(ptable))
@@ -2464,6 +2495,19 @@ phys_addr_t pmap_extract(
 
 	SPLVM(spl);
 	simple_lock(&pmap->lock);
+#if	MACH_LARGEPAGE
+	/* A large page PDE maps its own chunk, pmap_pte would instead
+	   read ordinary memory at the chunk base as a page table.  */
+	pte = pmap_pde(pmap, va);
+	if (pte != PT_ENTRY_NULL
+	    && (*pte & (INTEL_PTE_VALID | INTEL_PTE_PS))
+	       == (INTEL_PTE_VALID | INTEL_PTE_PS)) {
+	    pa = pte_to_pa(*pte) + (va & (pdenum2lin(1) - 1));
+	    simple_unlock(&pmap->lock);
+	    SPLX(spl);
+	    return pa;
+	}
+#endif	/* MACH_LARGEPAGE */
 	if ((pte = pmap_pte(pmap, va)) == PT_ENTRY_NULL)
 	    pa = 0;
 	else if (!(*pte & INTEL_PTE_VALID))

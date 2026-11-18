@@ -61,6 +61,20 @@
 #endif /* __i386__ */
 
 /*
+ * MACH_LARGEPAGE: the plain i386 4 MiB large page flavour of PSE is
+ * compiled in and may be used for the kernel direct map.  PAE page
+ * tables get large pages as 2 MiB pages of their own which this
+ * code does not handle, and under Xen the hypervisor owns the page
+ * tables, so both are excluded.  The CPU still has to report PSE at
+ * run time.
+ */
+#if	defined(__i386__) && !defined(PAE) && !defined(MACH_PV_PAGETABLES)
+#define	MACH_LARGEPAGE	1
+#else
+#define	MACH_LARGEPAGE	0
+#endif	/* MACH_LARGEPAGE */
+
+/*
  *	i386/i486 Page Table Entry
  */
 
@@ -305,6 +319,7 @@ void		pmap_update_interrupt(void);
  */
 
 pt_entry_t *pmap_pte(const pmap_t pmap, vm_offset_t addr);
+pt_entry_t *pmap_pde(const pmap_t pmap, vm_offset_t addr);
 
 /*
  *	Macros for speed.

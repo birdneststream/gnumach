@@ -37,6 +37,7 @@
 
 #include <i386/mp_desc.h>
 #include <i386/lock.h>
+#include <i386/pmap.h>
 #include <i386/apic.h>
 #include <i386/pit.h>
 #include <i386/locore.h>
@@ -223,6 +224,13 @@ paging_enable(void)
 #if PAE
     set_cr4(get_cr4() | CR4_PAE);
 #endif
+#if MACH_LARGEPAGE
+    /* PSE before paging, the kernel page directory holds large
+     * page entries for the direct map and they would be read as
+     * page table pointers without it.  */
+    if (CPU_HAS_FEATURE(CPU_FEATURE_PSE))
+        set_cr4(get_cr4() | CR4_PSE);
+#endif	/* MACH_LARGEPAGE */
     set_cr0(get_cr0() | CR0_PG /* | CR0_WP */);
     set_cr0(get_cr0() & ~(CR0_CD | CR0_NW));
     if (CPU_HAS_FEATURE(CPU_FEATURE_PGE))
