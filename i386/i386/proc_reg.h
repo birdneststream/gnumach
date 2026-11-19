@@ -401,6 +401,15 @@ MACRO_BEGIN \
 MACRO_END
 #endif
 
+/* Read the time stamp counter.  Shared by the Xen and KVM
+   paravirtualized clock reads.  */
+static inline uint64_t read_tsc(void)
+{
+	uint32_t low, high;
+	asm volatile("rdtsc" : "=a" (low), "=d" (high));
+	return ((uint64_t) high << 32) | low;
+}
+
 #endif	/* __GNUC__ */
 #endif	/* __ASSEMBLER__ */
 

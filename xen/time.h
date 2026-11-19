@@ -21,5 +21,6 @@
 
 #include <mach/mach_types.h>
 uint64_t hyp_get_time(void);
+uint64_t xen_clock_read_ns(void);
 
 #endif /* XEN_TIME_H */

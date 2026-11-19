@@ -33,6 +33,7 @@
 
 #define MSR_KVM_PV_SPINLOCK 0x4b564d01	/* KVM paravirtualized spinlock MSR */
 #define MSR_KVM_PV_EOI_EN   0x4b564d02	/* KVM paravirtualized EOI MSR */
+#define MSR_KVM_SYSTEM_TIME_NEW 0x4b564d01	/* KVM paravirtualized clock */
 
 #define MSR_EFER_SCE  0x00000001
 

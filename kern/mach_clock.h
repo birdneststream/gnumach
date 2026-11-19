@@ -47,7 +47,14 @@ extern time_value64_t	uptime;		/* time since bootup */
    Relaxes the one tick clamp in the fast read path, see
    clock_catchup.  */
 extern int		tickless_active;
-extern uint32_t		last_hpc_read;
+extern uint64_t		last_hpc_read;
+
+/* High precision clock read in nanoseconds since boot, monotonic.
+   Assigned once during architecture init from the best clock the
+   machine offers, the KVM paravirtualized clock, or the HPET
+   counter, or the Xen wall clock, and left NULL when no high
+   precision clock exists.  */
+extern uint64_t		(*hpclock_read_ns)(void);
 
 /* tk5d trace gates, see clock_catchup and i386/i386/tickless.c.  */
 
@@ -134,9 +141,5 @@ extern timeout_t timeout(timer_func_t *fcn, void *param, int interval);
 
 extern int timeopen(dev_t dev, int flag, io_req_t ior);
 extern void timeclose(dev_t dev, int flag);
-
-/* For high-precision clocks.  */
-extern uint32_t hpclock_read_counter(void);
-extern uint32_t hpclock_get_counter_period_nsec(void);
 
 #endif /* _KERN_MACH_CLOCK_H_ */

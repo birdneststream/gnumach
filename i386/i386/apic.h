@@ -27,6 +27,8 @@
 
 #include <stdint.h>
 
+#include <mach/boolean.h>
+
 typedef struct ApicReg {
         uint32_t r;	/* the actual register */
         uint32_t p[3];	/* pad to the next 128-bit boundary */
@@ -276,7 +278,8 @@ void calibrate_lapic_timer(void);
 void ioapic_toggle(int pin, int mask);
 void ioapic_configure(void);
 
-void hpet_init(void);
+boolean_t hpet_init(void);
+uint64_t hpet_clock_read_ns(void);
 void hpet_udelay(uint32_t us);
 void hpet_mdelay(uint32_t ms);
 

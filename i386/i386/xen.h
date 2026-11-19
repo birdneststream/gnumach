@@ -394,13 +394,6 @@ static inline void __attribute__((noreturn)) hyp_reboot(void)
 _hypcall2(int, set_debugreg, int, reg, unsigned long, value);
 _hypcall1(unsigned long, get_debugreg, int, reg);
 
-/* x86-specific */
-static inline uint64_t hyp_cpu_clock(void) {
-	uint32_t hi, lo;
-	asm volatile("rdtsc" : "=d"(hi), "=a"(lo));
-	return (((uint64_t) hi) << 32) | lo;
-}
-
 #else	/* __ASSEMBLER__ */
 /* TODO: SMP */
 #define cli movb $0xff,hyp_shared_info+CPU_CLI

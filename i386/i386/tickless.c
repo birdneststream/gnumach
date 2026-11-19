@@ -3,12 +3,12 @@
  * tick stopped the CPU hlt's until the earliest visible wheel
  * deadline, which a mode 0 one-shot on PIT channel 0 raises as a
  * plain IRQ0.  hardclock sees tickless_active on that interrupt and
- * charges the measured HPET gap through clock_catchup instead of the
+ * charges the measured clock gap through clock_catchup instead of the
  * per-tick path, and the idle loop either chains the one-shot or
  * exits through tickless_exit when a thread shows up.
  *
  * Built with --enable-tickless, single CPU only, and only with a
- * working high precision counter: without one there is no way to
+ * working high precision clock: without one there is no way to
  * measure the gap.  Everything here runs from the idle thread on the
  * only CPU, so the state needs no locks, only splsched around each
  * decision.
@@ -28,16 +28,10 @@
 static int	tk_warned_linux_dev;
 #endif
 
-/* The counter check is evaluated once, a machine without a
- * readable HPET never gains tickless idle.  */
+/* The gate is evaluated once, a machine without a high
+ * precision clock never gains tickless idle.  */
 static int	tk_gates_checked;
 static int	tk_gates_ok;
-
-static uint32_t
-tk_usec_to_hpc(unsigned int usec, uint32_t period)
-{
-	return (uint32_t)((uint64_t)usec * 1000 / period);
-}
 
 /*
  * Say whether tickless idle may engage on this machine.
@@ -45,17 +39,14 @@ tk_usec_to_hpc(unsigned int usec, uint32_t period)
 int
 tickless_idle_ready(void)
 {
-	uint32_t	period;
-
 	if (tk_gates_checked)
 		return tk_gates_ok;
 
 	tk_gates_checked = 1;
 	tk_gates_ok = 0;
 
-	/* No counter, no measured gap, no tickless.  */
-	period = hpclock_get_counter_period_nsec();
-	if (period == 0 || hpclock_read_counter() == 0)
+	/* No high precision clock, no measured gap, no tickless.  */
+	if (hpclock_read_ns == NULL)
 		return 0;
 
 	tk_gates_ok = 1;
@@ -76,18 +67,17 @@ tickless_idle_ready(void)
 static void
 tk_arm(void)
 {
-	uint32_t	now, period, since_hpc, since_us, spoke_usec;
+	uint64_t	now_ns, since_ns;
+	uint32_t	since_us, spoke_usec;
 	int		nearest;
 	unsigned int	usec;
 
-	now = hpclock_read_counter();
-	period = hpclock_get_counter_period_nsec();
-
+	now_ns = hpclock_read_ns();
 	nearest = timeout_next_tick();
 	/* Time since the last tick or catch up is the phase inside
 	 * the current tick.  */
-	since_hpc = now - last_hpc_read;
-	since_us = (uint32_t)((uint64_t)since_hpc * period / 1000);
+	since_ns = now_ns - last_hpc_read;
+	since_us = (uint32_t)(since_ns / 1000);
 	if (nearest < 0)
 		usec = MAX_PIT_USEC;
 	else {

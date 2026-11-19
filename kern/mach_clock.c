@@ -117,7 +117,8 @@ timeout_data_t	timeout_timers[NTIMERS] = {0};
 #if NCPUS > 1
 #warning This needs fixing
 #endif
-uint32_t	last_hpc_read = 0;
+uint64_t	(*hpclock_read_ns)(void);
+uint64_t	last_hpc_read = 0;
 
 /*
  * Tickless idle bookkeeping.  tickless_active is raised while the
@@ -171,7 +172,7 @@ MACRO_END
 
 #define read_mapped_time(time)						\
 MACRO_BEGIN								\
-	uint32_t _last_hpc;						\
+	uint64_t _last_hpc;						\
 	do {								\
 		_last_hpc = last_hpc_read;				\
 		(time)->seconds = mtime->time_value.seconds;		\
@@ -185,7 +186,7 @@ MACRO_END
 
 #define read_mapped_uptime(uptime)					\
 MACRO_BEGIN								\
-	uint32_t _last_hpc;						\
+	uint64_t _last_hpc;						\
 	do {								\
 		_last_hpc = last_hpc_read;				\
 		(uptime)->seconds = mtime->uptime_value.seconds;	\
@@ -350,7 +351,8 @@ void clock_interrupt(
 	    /*
 	     *	Only update high precision read on cpu0 once per clock interrupt
 	     */
-	    last_hpc_read = hpclock_read_counter();
+	    if (hpclock_read_ns != NULL)
+		last_hpc_read = hpclock_read_ns();
 	}
 }
 
@@ -579,11 +581,10 @@ clock_boottime_update(const struct time_value64 *new_time)
  * Add the time value since last clock interrupt in nanosecond.
  */
 static void
-time_value64_add_hpc(time_value64_t *value, uint32_t last_hpc)
+time_value64_add_hpc(time_value64_t *value, uint64_t last_hpc)
 {
-	uint32_t now = hpclock_read_counter();
-	/* Time since last clock interrupt in nanosecond.  */
-	int64_t ns = (now - last_hpc) * hpclock_get_counter_period_nsec();
+	/* Time since the last clock interrupt in nanosecond.  */
+	int64_t ns = hpclock_read_ns ? hpclock_read_ns() - last_hpc : 0;
 
 	/* Limit the value of ns under the period of a clock interrupt,
 	   unless the tick is stopped and clock_catchup owns the gap.  */
@@ -597,8 +598,8 @@ time_value64_add_hpc(time_value64_t *value, uint32_t last_hpc)
 
 /*
  *	Advance time, uptime and the timeout wheel across a measured
- *	counter gap, normally an idle period with the tick stopped.
- *	Reads the high precision counter, charges the full delta since
+ *	clock gap, normally an idle period with the tick stopped.
+ *	Reads the high precision clock, charges the full delta since
  *	last_hpc_read to wall time and uptime, advances elapsed_ticks by
  *	the whole ticks in the delta while keeping the remainder in
  *	catchup_ns so no drift accumulates, drains the wheel through
@@ -607,23 +608,21 @@ time_value64_add_hpc(time_value64_t *value, uint32_t last_hpc)
  */
 void clock_catchup(void)
 {
-	uint32_t	now, period;
-	uint64_t	ns, ns_per_tick;
+	uint64_t	now, ns, ns_per_tick;
 	unsigned long	add_ticks;
 	spl_t		s, s1;
 
 	if (cpu_number() != master_cpu)
 		return;
 
-	now = hpclock_read_counter();
-	period = hpclock_get_counter_period_nsec();
-	if (now == 0 || period == 0)
-		/* No high precision counter, nothing to measure.  */
+	if (hpclock_read_ns == NULL)
+		/* No high precision clock, nothing to measure.  */
 		return;
 
 	s = splhigh();	/* keep the clock interrupt out */
 
-	ns = (uint64_t)(now - last_hpc_read) * period;
+	now = hpclock_read_ns();
+	ns = now - last_hpc_read;
 
 	/* A gap past one second carries whole seconds.  The add
 	 * nanos macro normalises a single step only, so charging a

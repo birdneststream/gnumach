@@ -57,6 +57,7 @@
 #include <i386/fpu.h>
 #include <i386/gdt.h>
 #include <i386/ktss.h>
+#include <i386/kvmclock.h>
 #include <i386/ldt.h>
 #include <i386/spl.h>
 #include <i386/mp_desc.h>
@@ -144,6 +145,51 @@ extern void linux_init(void);
 #endif
 
 /*
+ * Initialize the high precision clock.  Every assignment of
+ * hpclock_read_ns lives here, the clock implementations only
+ * prepare their hardware and expose their read.  kvmclock wins
+ * when the hypervisor has it, otherwise the HPET counter is the
+ * fallback.  Runs after acpi_apic_init, its MADT walk maps the
+ * HPET block.
+ */
+static void
+hpc_init(void)
+{
+#ifdef MACH_HYP
+	hpclock_read_ns = xen_clock_read_ns;
+#else	/* MACH_HYP */
+	if (kvmclock_init())
+		hpclock_read_ns = kvmclock_read_ns;
+	else {
+#if defined(APIC)
+		if (hpet_init())
+			hpclock_read_ns = hpet_clock_read_ns;
+#elif defined(AT386) || defined(ATX86_64)
+		/*
+		 * Without the APIC nothing mapped the HPET yet.  Only a
+		 * free running counter is programmed, no interrupt and no
+		 * APIC, so bring it up on PIC builds too and keep the high
+		 * precision clock readable.
+		 */
+		acpi_hpet_discover();
+		if (hpet_init())
+			hpclock_read_ns = hpet_clock_read_ns;
+#endif
+	}
+
+#endif	/* MACH_HYP */
+
+	/*
+	 * One place, whatever clock won: rebase the per tick
+	 * reference to the current read.  The epoch of the winner
+	 * differs from the zero initial value and the first read
+	 * must not charge the difference to a gap.
+	 */
+	if (hpclock_read_ns != NULL)
+		last_hpc_read = hpclock_read_ns();
+}
+
+/*
  * Find devices.  The system is alive.
  */
 void machine_init(void)
@@ -163,6 +209,7 @@ void machine_init(void)
 
 #ifdef MACH_HYP
 	hyp_init();
+	hpc_init();
 #else	/* MACH_HYP */
 #if defined(APIC)
 	int err;
@@ -173,6 +220,10 @@ void machine_init(void)
 		      err, acpi_error_string(err));
 	}
 #endif
+	/*
+	 * Pick the high precision clock before anything reads it.
+	 */
+	hpc_init();
 #if (NCPUS > 1)
 	smp_init();
 #endif
@@ -237,23 +288,6 @@ void machine_init(void)
 	*(uint32_t *)phystokv(&apboot_jmp_offset) += apboot_addr;
 #endif
 #endif
-#endif
-
-#if defined(APIC)
-	/*
-	 * Initialize the HPET.  The MADT walk in acpi_apic_init
-	 * already mapped the block.
-	 */
-	hpet_init();
-#elif (defined(AT386) || defined(ATX86_64)) && !defined(MACH_HYP)
-	/*
-	 * Without the APIC nothing mapped the HPET yet.  Only a free
-	 * running counter is programmed, no interrupt and no APIC, so
-	 * bring it up on PIC builds too and keep the high precision
-	 * clock readable.
-	 */
-	acpi_hpet_discover();
-	hpet_init();
 #endif
 }
 

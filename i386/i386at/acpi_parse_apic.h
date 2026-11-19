@@ -23,6 +23,8 @@
 
 #include <stdint.h>
 
+#include <mach/boolean.h>
+
 enum ACPI_RETURN {
     ACPI_BAD_CHECKSUM = -1,
     ACPI_BAD_ALIGN = -2,
@@ -209,6 +211,7 @@ void acpi_initialise (const struct multiboot2_raw_info *bi);
    declared here because model_dep.c calls it without the LAPIC
    header.  */
 void acpi_hpet_discover (void);
-void hpet_init (void);
+boolean_t hpet_init (void);
+uint64_t hpet_clock_read_ns (void);
 
 #endif /* __ACPI_H__ */

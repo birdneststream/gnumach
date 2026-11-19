@@ -19,6 +19,7 @@
    Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111, USA. */
 
 #include <i386/apic.h>
+#include <mach/boolean.h>
 #include <i386/cpu.h>
 #include <i386at/idt.h>
 #include <string.h>
@@ -428,13 +429,22 @@ lapic_eoi(void)
 #define FSEC_PER_NSEC			1000000
 #define NSEC_PER_USEC			1000
 
+/* High precision clock reads for mach_clock, see kern/mach_clock.h.
+   The 32 bit main counter wraps after a few tens of seconds, the
+   wrap extended nanosecond base renews on every read so callers see
+   one monotonic value as long as no read gap outlasts a full wrap.  */
+static uint32_t hpet_ns_last;
+static uint64_t hpet_ns_base;
+
 /* This function sets up the HPET timer to be in
  * 32 bit periodic mode and not generating any interrupts.
  * The timer counts upwards and when it reaches 0xffffffff it
  * wraps to zero.  The timer ticks at a constant rate in nanoseconds which
  * is stored in hpet_period_nsec variable.
  */
-void
+/* Programs the free running counter, no interrupts.  Returns
+   TRUE when the HPET is readable, FALSE when none was mapped.  */
+boolean_t
 hpet_init(void)
 {
     uint32_t period;
@@ -442,7 +452,7 @@ hpet_init(void)
 
     if (hpet_addr == 0) {
         printf("HPET not available\n");
-        return;
+        return FALSE;
     }
 
     /* Find out how often the HPET ticks in nanoseconds */
@@ -469,7 +479,12 @@ hpet_init(void)
     /* Enable the HPET */
     HPET32(HPET_CFG) |= HPET_CFG_ENABLE;
 
+    /* The wrap extension state, hpc_init publishes the read.  */
+    hpet_ns_last = HPET32(HPET_COUNTER);
+    hpet_ns_base = 0;
+
     printf("HPET enabled\n");
+    return TRUE;
 }
 
 void
@@ -499,18 +514,12 @@ hpet_mdelay(uint32_t ms)
     hpet_udelay(ms * 1000);
 }
 
-/* This function is called in clock_interrupt(), so it's possible to be called
-   when HPET is not available.  */
-uint32_t
-hpclock_read_counter(void)
+uint64_t
+hpet_clock_read_ns(void)
 {
-    if (hpet_addr)
-        return HPET32(HPET_COUNTER);
-    return 0;
-}
+    uint32_t now = HPET32(HPET_COUNTER);
 
-uint32_t
-hpclock_get_counter_period_nsec(void)
-{
-    return hpet_period_nsec;
+    hpet_ns_base += (uint64_t)(now - hpet_ns_last) * hpet_period_nsec;
+    hpet_ns_last = now;
+    return hpet_ns_base;
 }
