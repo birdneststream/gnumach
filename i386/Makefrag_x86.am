@@ -40,6 +40,8 @@ libkernel_a_SOURCES += \
 	i386/i386/ktss.c \
 	i386/i386/ktss.h \
 	i386/i386/kttd_machdep.h \
+	i386/i386/kvmclock.c \
+	i386/i386/kvmclock.h \
 	i386/i386/ldt.c \
 	i386/i386/ldt.h \
 	i386/i386/lock.h \

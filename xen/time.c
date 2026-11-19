@@ -22,6 +22,7 @@
 #include <mach/xen.h>
 #include <machine/xen.h>
 #include <machine/spl.h>
+#include <i386/proc_reg.h>
 #include <machine/ipl.h>
 #include <i386at/rtc.h>
 #include <mach/machine/eflags.h>
@@ -44,7 +45,7 @@ static uint64_t hyp_get_stime(void) {
 	do {
 		version		= time->version;
 		rmb();
-		cpu_clock	= hyp_cpu_clock();
+		cpu_clock	= read_tsc();
 		last_cpu_clock	= time->tsc_timestamp;
 		system_time	= time->system_time;
 		mul		= time->tsc_to_system_mul;
@@ -137,6 +138,7 @@ clkstart(void)
 	hyp_evt_handler(port, (interrupt_handler_fn)hypclock_intr, 0, SPLHI);
 
 	/* first clock tick */
+	hpclock_read_ns = xen_clock_read_ns;
 	clock_interrupt(0, 0, 0, 0);
 	lastnsec = hyp_get_stime();
 
@@ -144,14 +146,8 @@ clkstart(void)
 	hyp_do_set_timer_op(hyp_get_stime()+10*1000*1000);
 }
 
-uint32_t
-hpclock_read_counter(void)
+static uint64_t
+xen_clock_read_ns(void)
 {
 	return hyp_get_stime();
-}
-
-uint32_t
-hpclock_get_counter_period_nsec(void)
-{
-	return 1;
 }
