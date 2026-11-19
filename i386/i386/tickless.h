@@ -12,6 +12,7 @@
 extern int	tickless_idle_ready(void);
 extern int	tickless_machine_idle(void);
 extern void	tickless_exit(void);
+extern int	tickless_clock_intr(void);
 
 #endif	/* MACH_TICKLESS */
 
