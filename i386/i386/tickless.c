@@ -2,15 +2,19 @@
  * Tickless idle entry and exit, the design notes patch 4.  With the
  * tick stopped the CPU hlt's until the earliest visible wheel
  * deadline, which a mode 0 one-shot on PIT channel 0 raises as a
- * plain IRQ0.  hardclock sees tickless_active on that interrupt and
- * charges the measured clock gap through clock_catchup instead of the
- * per-tick path, and the idle loop either chains the one-shot or
- * exits through tickless_exit when a thread shows up.
+ * plain IRQ0 on the master CPU.  hardclock sees the stopped tick
+ * on that interrupt and charges the measured clock gap through
+ * clock_catchup instead of the per-tick path, and the idle loop
+ * either chains the one-shot or exits through tickless_exit when
+ * a thread shows up.  An application processor, which ticks from
+ * its local APIC timer and owns no part of the wall clock, masks
+ * that timer in idle and needs no one-shot, its wakes are
+ * scheduling and device interrupts.
  *
- * Built with --enable-tickless, single CPU only, and only with a
- * working high precision clock: without one there is no way to
- * measure the gap.  Everything here runs from the idle thread on the
- * only CPU, so the state needs no locks, only splsched around each
+ * Built with --enable-tickless, x86 only, and only with a working
+ * high precision clock: without one there is no way to measure
+ * the gap.  Everything here runs from the idle thread of one CPU,
+ * so the state needs no locks, only splsched around each
  * decision.
  */
 
@@ -21,8 +25,20 @@
 
 #include <i386/pit.h>
 #include <i386/spl.h>
+#include <i386/tickless.h>
 
 #if	MACH_TICKLESS
+
+#if	NCPUS > 1 && defined(APIC)
+#include <i386/apic.h>
+#include <kern/cpu_number.h>
+
+/* Per CPU stop state on the application processors.  Only the
+ * local CPU touches its own slot, under splsched, so no lock is
+ * needed.  The master's stop state is tickless_active, which is
+ * the wall clock relevant part.  */
+static int	tk_ap_stopped[NCPUS];
+#endif	/* NCPUS > 1 && APIC */
 
 #ifdef LINUX_DEV
 static int	tk_warned_linux_dev;
@@ -110,6 +126,35 @@ tickless_machine_idle(void)
 
 	s = splsched();
 
+#if	NCPUS > 1 && defined(APIC)
+	if (cpu_number() != master_cpu) {
+		/* No clock duty here, stopping is just masking the
+		 * local timer, nothing to arm.  A tick already in
+		 * flight is swallowed in tickless_clock_intr.  */
+		if (!tk_ap_stopped[cpu_number()]) {
+			if (!tickless_idle_ready()) {
+				splx(s);
+				return 0;
+			}
+
+#ifdef LINUX_DEV
+			if (!tk_warned_linux_dev) {
+				tk_warned_linux_dev = 1;
+				printf("tickless idle on a LINUX_DEV build, "
+				       "linux glue timers stall in idle\n");
+			}
+#endif
+
+			tk_ap_stopped[cpu_number()] = 1;
+			lapic->lvt_timer.r |= LAPIC_DISABLE;
+		}
+		splx(s);
+
+		asm volatile("hlt" : : : "memory");
+		return 1;
+	}
+#endif	/* NCPUS > 1 && APIC */
+
 	if (!tickless_active) {
 		if (!tickless_idle_ready()) {
 			splx(s);
@@ -142,8 +187,9 @@ tickless_machine_idle(void)
 
 /*
  * Idle exit, from the idle thread loop once something is runnable.
- * Charges the gap through clock_catchup, puts the periodic tick back
- * and clears the flag.
+ * On the master the gap is charged through clock_catchup and the
+ * periodic PIT tick put back, on an application processor the
+ * periodic local APIC timer is rewritten, with no gap to charge.
  */
 void
 tickless_exit(void)
@@ -151,6 +197,18 @@ tickless_exit(void)
 	spl_t	s;
 
 	s = splsched();
+
+#if	NCPUS > 1 && defined(APIC)
+	if (cpu_number() != master_cpu) {
+		if (tk_ap_stopped[cpu_number()]) {
+			tk_ap_stopped[cpu_number()] = 0;
+			lapic_timer_resume();
+		}
+		splx(s);
+		return;
+	}
+#endif	/* NCPUS > 1 && APIC */
+
 	if (!tickless_active) {
 		splx(s);
 		return;
@@ -161,6 +219,33 @@ tickless_exit(void)
 	tickless_active = 0;
 
 	splx(s);
+}
+
+/*
+ * hardclock entry with the local tick stopped.  On the master the
+ * PIT one-shot fired and the measured gap is charged through
+ * clock_catchup, the idle loop re-arms or exits on its wake.  On
+ * an application processor this can only be a tick that raced the
+ * masking, nothing is charged, the timeout wheel is the master's
+ * business.  Returns TRUE when hardclock must not run the per
+ * tick path.
+ */
+int
+tickless_clock_intr(void)
+{
+#if	NCPUS > 1 && defined(APIC)
+	if (cpu_number() != master_cpu)
+		return tk_ap_stopped[cpu_number()];
+#endif	/* NCPUS > 1 && APIC */
+
+	if (!tickless_active)
+		return 0;
+
+	clock_catchup();
+#ifdef LINUX_DEV
+	linux_timer_intr();
+#endif	/* LINUX_DEV */
+	return 1;
 }
 
 #endif	/* MACH_TICKLESS */

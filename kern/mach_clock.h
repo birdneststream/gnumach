@@ -43,9 +43,10 @@ extern int		tick;		/* number of usec per tick */
 extern time_value64_t	time; 		/* wallclock time (unadjusted) */
 extern time_value64_t	uptime;		/* time since bootup */
 
-/* Nonzero while the periodic tick is stopped for tickless idle.
-   Relaxes the one tick clamp in the fast read path, see
-   clock_catchup.  */
+/* Nonzero while the periodic tick is stopped on the master CPU
+   for tickless idle.  Relaxes the one tick clamp in the fast read
+   path, see clock_catchup.  An application processor's local tick
+   state is private to i386/i386/tickless.c.  */
 extern int		tickless_active;
 extern uint64_t		last_hpc_read;
 
@@ -58,11 +59,11 @@ extern uint64_t		(*hpclock_read_ns)(void);
 
 /* tk5d trace gates, see clock_catchup and i386/i386/tickless.c.  */
 
-/* Single CPU x86 with no hypervisor and a tickless build is where
-   tickless idle can engage.  One definition, used by kern and i386
-   callers alike.  The build option is --enable-tickless, which sets
-   the TICKLESS configure define.  */
-#if	TICKLESS && (defined(AT386) || defined(ATX86_64)) && (NCPUS == 1) && !defined(MACH_HYP)
+/* x86 with no hypervisor and a tickless build is where tickless
+   idle can engage, on any number of CPUs.  One definition, used by
+   kern and i386 callers alike.  The build option is
+   --enable-tickless, which sets the TICKLESS configure define.  */
+#if	TICKLESS && (defined(AT386) || defined(ATX86_64)) && !defined(MACH_HYP)
 #define	MACH_TICKLESS	1
 #else
 #define	MACH_TICKLESS	0

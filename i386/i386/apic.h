@@ -274,6 +274,7 @@ void lapic_setup(void);
 void lapic_disable(void);
 void lapic_enable(void);
 void lapic_enable_timer(void);
+void lapic_timer_resume(void);
 void calibrate_lapic_timer(void);
 void ioapic_toggle(int pin, int mask);
 void ioapic_configure(void);

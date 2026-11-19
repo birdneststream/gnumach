@@ -277,8 +277,15 @@ calibrate_lapic_timer(void)
     }
 }
 
+/*
+ * Rewrite the full periodic setup of the local timer.  Used at
+ * boot and to put the tick back after tickless idle masked the
+ * timer on this CPU, the counter phase restarts from a full
+ * period, which costs at most one tick of quantum granularity
+ * after an idle stretch.
+ */
 void
-lapic_enable_timer(void)
+lapic_timer_resume(void)
 {
     /* Set up counter */
     lapic->init_count.r = calibrated_ticks;
@@ -289,6 +296,12 @@ lapic_enable_timer(void)
 
     /* Some buggy hardware requires this set again */
     lapic->divider_config.r = LAPIC_TIMER_DIVIDE_2;
+}
+
+void
+lapic_enable_timer(void)
+{
+    lapic_timer_resume();
 
     /* Enable interrupts for the first time */
     printf("LAPIC timer configured on cpu%d\n", cpu_number());
