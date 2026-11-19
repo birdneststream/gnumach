@@ -114,9 +114,10 @@ timeout_data_t	timeout_timers[NTIMERS] = {0};
  * and the difference between these two read is multiplied by the counter
  * period and added to the read value from time or uptime to get a more
  * accurate time read.  */
-#if NCPUS > 1
-#warning This needs fixing
-#endif
+/* The high precision clock anchor and the mapped time values are
+ * written by the master CPU only, from clock_interrupt and
+ * clock_catchup, and read everywhere through the mapped time
+ * seqlock against exactly that writer.  */
 /* High precision clock read in nanoseconds, assigned at init, see
    mach_clock.h.  */
 uint64_t	(*hpclock_read_ns)(void);
@@ -124,9 +125,11 @@ uint64_t	last_hpc_read = 0;
 
 /*
  * Tickless idle bookkeeping.  tickless_active is raised while the
- * periodic tick is stopped, which relaxes the one tick clamp in
- * time_value64_add_hpc so reads can see the full gap that
- * clock_catchup charges when the tick restarts.  catchup_ns keeps
+ * periodic tick is stopped on the master CPU, which relaxes the
+ * one tick clamp in time_value64_add_hpc so reads can see the
+ * full gap that clock_catchup charges when the tick restarts.
+ * An application processor stopping its local tick does not touch
+ * the wall clock and never raises the flag.  catchup_ns keeps
  * the sub tick remainder of the last catch up so no drift
  * accumulates across gaps.  Both are only touched on the master
  * CPU.

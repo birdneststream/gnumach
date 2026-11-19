@@ -35,6 +35,7 @@
 #include <kern/mach_clock.h>
 #include <i386/thread.h>
 #include <i386/hardclock.h>
+#include <i386/tickless.h>
 
 #if	defined(AT386) || defined(ATX86_64)
 #include <i386/ipl.h>
@@ -54,19 +55,13 @@ hardclock(int iunit, /* 'unit' number */
           )
 {
 #if	MACH_TICKLESS
-	if (tickless_active) {
+	if (tickless_clock_intr()) {
 	    /*
-	     * IRQ0 with the tick stopped is the idle one-shot, not
-	     * the periodic tick.  Charge the measured gap through
-	     * clock_catchup instead of the per-tick path, which
-	     * would add a fixed tick and refresh last_hpc_read so
-	     * the gap is lost.  The idle loop re-arms the one-shot
-	     * or exits to a runnable thread on wake.
+	     * The clock interrupt with the local tick stopped, the
+	     * idle one-shot on the master, a tick racing the local
+	     * timer masking on an application processor.  The gap
+	     * accounting lives in tickless_clock_intr.
 	     */
-	    clock_catchup();
-#ifdef LINUX_DEV
-	    linux_timer_intr();
-#endif /* LINUX_DEV */
 	    return;
 	}
 #endif
