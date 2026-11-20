@@ -40,8 +40,13 @@ static volatile struct pvclock_vcpu_time_info kvmclock_pvti
 
 /*
  * Scale a TSC delta by the host supplied fraction, the result is
- * nanoseconds.  The 64 by 32 multiply keeps the full product before
- * the shift, gcc expands it inline on i386.
+ * nanoseconds.  The product of the 64 bit delta and the 32 bit
+ * fraction has up to 96 bits, and a 64 bit product overflows once the
+ * delta stands for 2^32 ns, about 4.3 seconds after the host last
+ * wrote the time info struct.  It is therefore taken in two halves:
+ * the high word of the delta times the fraction, plus the low word
+ * times the fraction shifted right by 32, which is the 96 bit product
+ * shifted right by 32 exactly.
  */
 uint64_t
 kvmclock_scale(uint64_t delta, uint32_t mul, int8_t shift)
@@ -50,7 +55,8 @@ kvmclock_scale(uint64_t delta, uint32_t mul, int8_t shift)
 		delta >>= -shift;
 	else
 		delta <<= shift;
-	return (delta * (uint64_t) mul) >> 32;
+	return (delta >> 32) * (uint64_t) mul
+	    + (((delta & 0xffffffff) * (uint64_t) mul) >> 32);
 }
 
 /*
