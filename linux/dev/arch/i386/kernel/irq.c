@@ -33,6 +33,8 @@
 #include <i386/spl.h>
 #include <i386/irq.h>
 #include <i386/pit.h>
+#include <kern/sched.h>
+#include <kern/sched_prim.h>
 
 #define MACH_INCLUDE
 #include <linux/mm.h>
@@ -53,6 +55,11 @@
 #include <machine/spl.h>
 
 #include <device/intr.h>
+
+/* Seconds a user interrupt registration waits for a kernel driver's
+ * action on the line to resolve before refusing, a probe that fails
+ * frees the line within a few seconds.  */
+#define USER_INTR_DEFER_SECONDS 5
 
 #if 0
 /* XXX: This is the way it's done in linux 2.2. GNU Mach currently uses intr_count. It should be made using local_{bh/irq}_count instead (through hardirq_enter/exit) for SMP support. */
@@ -215,7 +222,19 @@ setup_x86_irq (int irq, struct linux_action *new)
       unmask_irq (irq);
     }
   restore_flags (flags);
+  thread_wakeup ((event_t) &irq_action[irq]);
   return 0;
+}
+
+static boolean_t
+line_has_kernel_action (unsigned int irq)
+{
+  struct linux_action *a;
+
+  for (a = irq_action[irq]; a; a = a->next)
+    if (a->handler != NULL)
+      return TRUE;
+  return FALSE;
 }
 
 int
@@ -241,6 +260,32 @@ install_user_intr_handler (struct irqdev *dev, int id, unsigned long flags,
 	  return linux_to_mach_error (-EAGAIN);
 	}
       old = old->next;
+    }
+
+  /* A kernel driver action on the line means the kernel owns it or is
+   * probing it.  The redirection entry carries one vector and one
+   * trigger mode, so installing a user handler would reprogram the
+   * entry and starve the kernel consumer of its interrupts.  Defer
+   * until the kernel action resolves: a probe that fails calls
+   * free_irq and the line becomes available, a probe that succeeds
+   * keeps it and the registration is refused.  */
+  if (line_has_kernel_action (irq))
+    {
+      int waited;
+
+      for (waited = 0; waited < USER_INTR_DEFER_SECONDS
+	     && line_has_kernel_action (irq); waited++)
+	{
+	  assert_wait ((event_t) &irq_action[irq], FALSE);
+	  thread_set_timeout (hz);
+	  thread_block (NULL);
+	}
+      if (line_has_kernel_action (irq))
+	{
+	  printk ("user interrupt registration refused:"
+		  " kernel driver owns line %d\n", irq);
+	  return D_ALREADY_OPEN;
+	}
     }
 
   /*
@@ -330,6 +375,7 @@ free_irq (unsigned int irq, void *dev_id)
 	}
       restore_flags (flags);
       linux_kfree (action);
+      thread_wakeup ((event_t) &irq_action[irq]);
       return;
     }
 
