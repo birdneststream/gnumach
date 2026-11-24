@@ -500,6 +500,8 @@ pmap_pde(const pmap_t pmap, vm_offset_t addr)
  *	Given an offset and a map, compute the address of the
  *	pte.  If the address is invalid with respect to the map
  *	then PT_ENTRY_NULL is returned (and the map may need to grow).
+ *	An address covered by a large page has no pte of its own,
+ *	so it counts as invalid here too.
  *
  *	This is only used internally.
  */
@@ -525,6 +527,14 @@ pmap_pte(const pmap_t pmap, vm_offset_t addr)
 	pte = *ptp;
 	if ((pte & INTEL_PTE_VALID) == 0)
 		return(PT_ENTRY_NULL);
+#if	MACH_LARGEPAGE
+	/* A large page PDE maps its own chunk, there is no page
+	   table behind it.  Its frame number is the chunk base,
+	   so going on would hand back a pointer into the memory
+	   the chunk maps, for the caller to write a pte into.  */
+	if (pte & INTEL_PTE_PS)
+		return(PT_ENTRY_NULL);
+#endif	/* MACH_LARGEPAGE */
 	ptp = (pt_entry_t *)ptetokv(pte);
 	return(&ptp[ptenum(addr)]);
 }
