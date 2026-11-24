@@ -585,6 +585,11 @@ db_write_bytes(
 	    addr <= (vm_offset_t)&etext)
 	{
 	    ptep0 = pmap_pte(kernel_pmap, addr);
+	    if (ptep0 == PT_ENTRY_NULL) {
+		db_printf("\ncannot write to large page mapping at %x\n", addr);
+		db_error(0);
+		/* NOTREACHED */
+	    }
 	    oldmap0 = *ptep0;
 	    *ptep0 |= INTEL_PTE_WRITE;
 
@@ -593,6 +598,16 @@ db_write_bytes(
 		/* data crosses a page boundary */
 
 		ptep1 = pmap_pte(kernel_pmap, addr1);
+		if (ptep1 == PT_ENTRY_NULL) {
+		    /* Nothing was invalidated yet, put the text
+		       mapping back and leave.  */
+		    *ptep0 = oldmap0;
+		    flush_tlb();
+		    db_printf("\ncannot write to large page mapping at %x\n",
+			     addr1);
+		    db_error(0);
+		    /* NOTREACHED */
+		}
 		oldmap1 = *ptep1;
 		*ptep1 |= INTEL_PTE_WRITE;
 	    }
